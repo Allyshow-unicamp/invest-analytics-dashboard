@@ -213,7 +213,7 @@ O Sharpe segue a definição baseada em retornos diferenciais discutida por [Wil
 
 **Dados e proventos.** `auto_adjust=False` é explícito no download. O backtest usa `Close` e dividendos separados; correlação e alocações usam `Adj Close`, sem somar proventos novamente. O adaptador assume a base de desdobramentos fornecida pelo Yahoo; não multiplica posições por splits novamente. A [documentação do yfinance](https://ranaroussi.github.io/yfinance/reference/api/yfinance.download.html) descreve os parâmetros e a data final exclusiva, convertida pelo adaptador a partir da data inclusiva da interface.
 
-**Referências.** O CDI diário SGS 12 é composto por mês. Falta de CDI não vira retorno zero. O [Ibovespa é um índice de retorno total em reais](https://www.b3.com.br/pt_br/market-data-e-indices/indices/indices-amplos/ibovespa.htm); seus dividendos não são adicionados novamente. Nos EUA, o benchmark é SPY ajustado e o Sharpe usa uma taxa anual efetiva USD informada pelo usuário; caixa USD rende 0% neste modelo.
+**Referências.** O CDI diário SGS 12 é composto por mês. Falta de CDI não vira retorno zero. O [Ibovespa é um índice de retorno total em reais](https://www.b3.com.br/pt_br/market-data-e-indices/indices/indices-amplos/ibovespa.htm); seus dividendos não são adicionados novamente. Nos EUA, o benchmark é o ETF VOO ajustado e o Sharpe usa uma taxa anual efetiva USD informada pelo usuário; caixa USD rende 0% neste modelo.
 
 ## Qualidade dos dados e limites
 

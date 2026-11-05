@@ -29,11 +29,12 @@ SIGNAL_COLORS = {
     "SEM DIVIDENDOS": "gray",
     "SEM PREÇO": "gray",
 }
+DEFAULT_US_TICKERS = ("O", "CVX", "ED", "ADM", "XOM", "JNJ", "PEP", "KO", "PG", "ABT")
 PRESENTATION: dict[str, object] = {
     "source": "Demonstração (sem internet)",
     "market": "B3 · BRL",
     "active_market": "B3",
-    "tickers": list(B3_WEIGHTS)[:5],
+    "tickers": list(B3_WEIGHTS),
     "start": date(2016, 1, 31),
     "end": date(2025, 12, 31),
     "capital": 100_000.0,
@@ -236,7 +237,7 @@ def render_dashboard() -> None:
     market_code = "B3" if market.startswith("B3") else "EUA"
     demo = source.startswith("Demonstração")
     universe = tuple(B3_WEIGHTS) if market_code == "B3" else US_TICKERS
-    default_assets = list(universe[:5])
+    default_assets = list(B3_WEIGHTS) if market_code == "B3" else list(DEFAULT_US_TICKERS)
     if st.session_state.get("active_market") != market_code:
         st.session_state["tickers"] = default_assets
         st.session_state["active_market"] = market_code

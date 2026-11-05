@@ -6,7 +6,27 @@ import pandas as pd
 from core.bazin import B3_WEIGHTS
 from data.models import DataError, MarketData
 
-US_TICKERS = ("KO", "JNJ", "PG", "SPY", "QQQ", "O", "JEPQ")
+US_TICKERS = (
+    "O",
+    "CVX",
+    "ED",
+    "ADM",
+    "XOM",
+    "JNJ",
+    "PEP",
+    "KO",
+    "PG",
+    "ABT",
+    "TGT",
+    "LOW",
+    "CL",
+    "GWW",
+    "EMR",
+    "VOO",
+    "SPY",
+    "QQQ",
+    "JEPQ",
+)
 
 
 class DemoProvider:
@@ -19,13 +39,16 @@ class DemoProvider:
             raise DataError("Ticker indisponível na demonstração.")
         index = pd.date_range("2010-01-31", "2025-12-31", freq="ME")
         rng = np.random.default_rng(42 if market == "B3" else 43)
-        common = rng.normal(0.006, 0.04, len(index))
-        common[120:123] -= 0.12
+        common = rng.normal(0.0065, 0.036, len(index))
+        common[120:123] -= 0.075
         prices, dividends, adjusted = {}, {}, {}
         for i, ticker in enumerate(universe):
-            r = np.clip(common * (0.6 + i / 25) + rng.normal(0.001, 0.025, len(index)), -0.65, 0.65)
-            quotes = (20 + i * 5) * np.cumprod(1 + r)
-            payments = np.where(index.month.isin([3, 6, 9, 12]), np.roll(quotes, 1) * 0.018, 0)
+            overvalued = market == "B3" and i in (3, 7, 9, 11)
+            drift = (0.0005 if overvalued else 0.0028) if market == "B3" else 0.0038
+            r = np.clip(common * (0.7 + (i % 6) / 25) + rng.normal(drift, 0.022, len(index)), -0.65, 0.65)
+            quotes = (20 + i * 4) * np.cumprod(1 + r)
+            q_yield = (0.011 if overvalued else 0.028 - (i % 3) * 0.003) if market == "B3" else 0.011
+            payments = np.where(index.month.isin([3, 6, 9, 12]), np.roll(quotes, 1) * q_yield, 0)
             payments[0] = 0
             total = (quotes[1:] + payments[1:]) / quotes[:-1]
             prices[ticker], dividends[ticker] = quotes, payments
@@ -33,8 +56,9 @@ class DemoProvider:
         frame = pd.DataFrame(prices, index=index).loc[start:end, list(tickers)]
         if len(frame) < 3:
             raise DataError("Demonstração disponível entre janeiro/2010 e dezembro/2025.")
-        benchmark = pd.Series(100 * np.cumprod(1 + common), index=index).loc[frame.index]
-        cash = (1.10 ** (1 / 12) - 1) if market == "B3" else 0.0
+        bench_drift = 0.0038 if market == "B3" else 0.0052
+        benchmark = pd.Series(100 * np.cumprod(1 + common + bench_drift), index=index).loc[frame.index]
+        cash = (1.095 ** (1 / 12) - 1) if market == "B3" else 0.0
         return MarketData(
             prices=frame,
             adjusted_prices=pd.DataFrame(adjusted, index=index).loc[frame.index, list(tickers)],
@@ -43,6 +67,6 @@ class DemoProvider:
             cash_returns=pd.Series(cash, index=frame.index),
             currency="BRL" if market == "B3" else "USD",
             source="Demonstração sintética · seed 42/43",
-            benchmark_name="Índice sintético",
+            benchmark_name="Ibovespa sintético" if market == "B3" else "VOO sintético",
             notes=("Todos os dados deste modo são simulados.",),
         )

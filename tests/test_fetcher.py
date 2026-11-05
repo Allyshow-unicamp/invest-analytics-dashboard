@@ -71,7 +71,7 @@ def test_cache_ttl_isolation_and_exception_policy() -> None:
 
 def test_provider_uses_explicit_adjustment_and_end_exclusive() -> None:
     dates = pd.date_range("2020-01-31", periods=4, freq="ME")
-    symbols = ("A", "SPY")
+    symbols = ("A", "VOO")
     columns = pd.MultiIndex.from_product([["Close", "Adj Close", "Dividends"], symbols])
     raw = pd.DataFrame([[10, 20, 10, 20, 0, 0]] * 4, index=dates, columns=columns)
     CACHE.clear()

@@ -120,7 +120,7 @@ class YahooBCBProvider:
         return CACHE.get_or_load(key, lambda: self._download(tickers, start, end, market))
 
     def _download(self, tickers: tuple[str, ...], start: str, end: str, market: str) -> MarketData:
-        benchmark_symbol = "^BVSP" if market == "B3" else "SPY"
+        benchmark_symbol = "^BVSP" if market == "B3" else "VOO"
         symbols = tuple(dict.fromkeys((*tickers, benchmark_symbol)))
         exclusive_end = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -188,7 +188,7 @@ class YahooBCBProvider:
             cash_returns=cash,
             currency="BRL" if market == "B3" else "USD",
             source="Yahoo Finance + BCB" if market == "B3" else "Yahoo Finance",
-            benchmark_name="Ibovespa" if market == "B3" else "SPY (retorno total)",
+            benchmark_name="Ibovespa" if market == "B3" else "VOO (retorno total)",
             notes=notes,
         )
 

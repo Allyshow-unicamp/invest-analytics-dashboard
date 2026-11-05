@@ -96,10 +96,20 @@ def executive_summary(
         if cagr is not None and ref_cagr is not None:
             gap = (cagr - ref_cagr) * 100
             css, verb = ("ia-up", "acima") if gap >= 0 else ("ia-down", "abaixo")
+            cdi_note = ""
+            if "CDI" in summary.index:
+                cdi_cagr = _value(cast(pd.Series, summary.loc["CDI"]), "cagr")
+                if cdi_cagr is not None:
+                    cdi_gap = (cagr - cdi_cagr) * 100
+                    cdi_css, cdi_verb = ("ia-up", "acima") if cdi_gap >= 0 else ("ia-down", "abaixo")
+                    cdi_note = (
+                        f' e <span class="{cdi_css}">{number(abs(cdi_gap))} p.p. {cdi_verb}</span> '
+                        f"do CDI ({number(cdi_cagr, True)} a.a.)"
+                    )
             parts.append(
                 f"O crescimento anual foi de <b>{number(cagr, True)}</b>, "
                 f'<span class="{css}">{number(abs(gap))} p.p. {verb}</span> de {escape(benchmark)} '
-                f"({number(ref_cagr, True)} a.a.)."
+                f"({number(ref_cagr, True)} a.a.){cdi_note}."
             )
         dd, ref_dd = _value(row, "max_drawdown"), _value(ref, "max_drawdown")
         if dd is not None and ref_dd is not None:
@@ -210,7 +220,7 @@ def methodology() -> None:
 - Sem reinvestimento, os proventos ficam numa reserva de caixa. Caixa rende CDI
   na B3 e 0% em USD. Impostos, custos, slippage e restrições de lote não são modelados.
 - O Ibovespa é um índice de retorno total. Comparações em BRL e USD são separadas.
-  O benchmark nos EUA é SPY com proventos incorporados.
+  O benchmark nos EUA é o ETF VOO com proventos incorporados.
 - O bootstrap sorteia meses independentes com reposição. Não prevê crises novas,
   dependência temporal ou mudanças de regime. As bandas são cenários empíricos.
 - A cesta atual aplicada ao passado tem viés de sobrevivência. O estudo não
