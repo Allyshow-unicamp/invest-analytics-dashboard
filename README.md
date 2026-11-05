@@ -74,6 +74,8 @@ Os resultados da demonstração são cenários sintéticos, sem relação com a 
 
 Acesse **Simulador de aportes B3** em **Área de trabalho**, na barra lateral. O dashboard analítico continua disponível na mesma navegação.
 
+![Simulador de aportes B3 com preços sintéticos no modo demonstração](docs/contribution-simulator.jpg)
+
 O módulo resolve uma decisão recorrente: **onde aplicar o próximo aporte sem vender posições existentes?** Usar o aporte para corrigir desvios pode aproximar a carteira da política de alocação e evitar vendas desnecessárias. A otimização permite investigar alternativas de risco, respeitando a posição que o investidor já possui.
 
 ### Como usar
