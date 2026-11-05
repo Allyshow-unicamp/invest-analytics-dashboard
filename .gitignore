@@ -33,3 +33,4 @@ credentials*.json
 /retorno_mensal_25_anos.csv
 /dividendos_anuais_25_anos.csv
 /prompt.md
+/new-prompt.md

@@ -25,6 +25,7 @@ O Invest Analytics permite investigar essas perguntas em uma única interface:
 - **Cenários:** bootstrap histórico com capital atual, aportes futuros e bandas de percentis.
 - **Dividendos:** Radar Bazin com cinco anos completos de histórico e calculadoras de valuation por yield, Gordon e renda em USD.
 - **Mercados separados:** ativos brasileiros em BRL e americanos em USD, com benchmarks e referências próprios.
+- **Aportes B3:** carteira editável de ações, FIIs e ETFs, compras sem vendas, lotes inteiros, caixa residual e impacto na volatilidade.
 
 ## Execute localmente
 
@@ -69,6 +70,64 @@ Para dados reais, selecione **Mercado (Yahoo + BCB)** na barra lateral, escolha 
 
 Os resultados da demonstração são cenários sintéticos, sem relação com a performance histórica dos tickers exibidos.
 
+## Simulador de aportes B3
+
+Acesse **Simulador de aportes B3** em **Área de trabalho**, na barra lateral. O dashboard analítico continua disponível na mesma navegação.
+
+O módulo resolve uma decisão recorrente: **onde aplicar o próximo aporte sem vender posições existentes?** Usar o aporte para corrigir desvios pode aproximar a carteira da política de alocação e evitar vendas desnecessárias. A otimização permite investigar alternativas de risco, respeitando a posição que o investidor já possui.
+
+### Como usar
+
+1. Edite os tickers, classes, quantidades atuais, preços médios e metas. A soma das metas por ativo deve ser **100%**. As classes são informativas; metas por classe podem ser expressas distribuindo seu percentual entre os ativos daquela classe.
+2. Informe o aporte em reais e o lote mínimo de cada ativo. **Lote 1** permite compras unitárias; lote 100 exige múltiplos de 100. No mercado fracionário são negociadas quantidades inteiras, não partes decimais de uma ação/cota.
+3. Escolha rebalanceamento inteligente, alocação proporcional ou otimização de risco/retorno. A otimização oferece variância mínima e Sharpe máximo.
+4. Selecione demonstração ou Yahoo Finance e clique em **Simular aporte**. Consultas e cálculos ocorrem somente ao enviar o formulário.
+5. Confira ordens indicativas, caixa residual, pesos antes/depois versus metas e volatilidade da carteira consolidada.
+
+O preço médio acompanha o custo da posição e é atualizado após a compra. **A alocação usa a cotação de mercado**, sem confundir custo histórico com exposição atual. A tabela aceita códigos como `ITUB4`, `HGLG11`, `BOVA11` e `ITUB4.SA`; o sufixo `.SA` é normalizado automaticamente. Um código fracionário como `ITUB4F` consulta o preço-base `ITUB4.SA`. A cotação desse livro pode diferir da referência consultada.
+
+### Estratégias e restrições
+
+Considere `v_i = quantidade_i × preço_i`, patrimônio atual `V = soma(v_i)`, aporte `A`, meta `t_i` e compra financeira `x_i`.
+
+| Modo | Cálculo adotado |
+| --- | --- |
+| Rebalanceamento inteligente | Minimiza `soma(((v_i + x_i)/(V+A) - t_i)²)`, com `x_i >= 0` e `soma(x_i)=A`. Projeta os déficits `d_i=t_i(V+A)-v_i` no simplex: `x_i=max(d_i-τ,0)`, escolhendo `τ` para que as compras somem o aporte. |
+| Proporcional direta | Define `x_i=A×t_i`, sem corrigir o desvio já existente nas posições. |
+| Variância mínima | Usa SLSQP para minimizar `w_finalᵀ Σ_anual w_final`, onde `w_final=(v+A×z)/(V+A)`, `z>=0` e `soma(z)=1`. A carteira atual é mantida; somente o dinheiro novo é otimizado. |
+| Sharpe máximo | Usa a mesma região viável e maximiza o excesso esperado dividido pela volatilidade. O retorno esperado vem da média dos retornos diários ajustados; a taxa anual efetiva informada é convertida para taxa diária antes da anualização. |
+
+**Meta zero bloqueia novas compras em todos os modos**, preservando posições antigas. Nos modos de risco, metas positivas definem quais ativos podem receber dinheiro; os percentuais alvo não são restrições rígidas de exposição. Assim, uma carteira otimizada pode permanecer distante das metas. O Sharpe utiliza múltiplos pontos iniciais determinísticos, mas a solução numérica não tem garantia de máximo global.
+
+O otimizador emprega o [SLSQP do SciPy](https://docs.scipy.org/doc/scipy/reference/optimize.minimize-slsqp.html), com validação de convergência, orçamento e não negatividade. Não se trata de execução automática de ordens.
+
+### Quantidades inteiras e caixa residual
+
+O plano contínuo é arredondado para baixo em múltiplos do lote mínimo. Uma busca gulosa tenta usar a sobra em um lote adicional por ativo quando isso reduz o erro quadrático em relação ao plano contínuo. A alocação discreta é **heurística**: não promete o melhor plano inteiro e pode preservar caixa mesmo quando alguma compra ainda cabe no orçamento.
+
+Preços e aporte são contabilizados em **centavos**, com arredondamento comercial. O motor verifica:
+
+```text
+total em compras + caixa residual = aporte
+quantidade a comprar >= 0
+quantidade a comprar é múltipla do lote mínimo
+peso final do ativo = valor após compra / (patrimônio atual + aporte)
+```
+
+O caixa residual permanece no total da carteira. Os pesos dos ativos somados ao peso desse caixa resultam em 100%. Carteira já balanceada recebe dinheiro na proporção das metas, sujeito aos lotes. Se o aporte não comporta nenhuma compra válida, fica integralmente em caixa.
+
+### Cotações e impacto no risco
+
+- O modo real consulta o histórico intradiário de 1 minuto no Yahoo, com referência de horário em São Paulo. Sem série intradiária, usa o último fechamento diário e identifica esse fallback. Cotações ausentes, não positivas ou com mais de sete dias são recusadas.
+- **Última cotação disponível não é garantia de tempo real.** O provedor pode ter atraso; o preço de execução pode mudar. O cache de cotações dura 60 segundos e pode ser ignorado na simulação; o histórico diário é armazenado por uma hora. Nenhuma falha é armazenada como resultado válido.
+- A matriz de covariância usa retornos diários de preços ajustados, janela comum de 1, 3 ou 5 anos e exclusão do pregão corrente. Não se preenchem lacunas com preços de outro dia.
+- A volatilidade anual é `sqrt(wᵀ Σ_diária w × 252)`, usando a mesma amostra antes/depois. São exigidos ao menos 60 retornos completos por ativo para risco e otimização.
+- São mostrados o risco após o aporte **com o caixa residual** e o risco **somente dos ativos investidos**. O caixa é tratado como volatilidade zero; uma queda do risco consolidado pode decorrer de dinheiro não aplicado.
+- Histórico insuficiente não bloqueia o rebalanceamento ou o proporcional quando há cotações válidas. O impacto no risco fica indisponível; as estratégias de otimização exigem histórico suficiente.
+- A carteira e os resultados ficam na memória da sessão no servidor. O provedor recebe tickers e datas, sem quantidades ou preços médios. Nada é gravado em arquivos nem enviado a corretoras.
+
+Custos, impostos, liquidez, spreads e slippage não entram no plano. Retorno esperado e risco histórico são estimativas retrospectivas. O exemplo inicial de ação/FII/ETF tem dados fictícios no modo demonstração e não representa uma indicação de ativos.
+
 ## Arquitetura e manutenção
 
 ```text
@@ -77,20 +136,25 @@ invest-analytics-dashboard/
 ├── core/
 │   ├── metrics.py               # Retorno, risco e caudas históricas
 │   ├── portfolio.py             # Posições, fluxos, carteiras e bootstrap
+│   ├── allocation.py            # RebalancingEngine e alocação discreta B3
 │   ├── bazin.py                 # Sinais e alocação de novos recursos
 │   └── valuation.py             # DYT, Gordon e renda parametrizada
 ├── data/
 │   ├── models.py                # MarketData e contrato MarketProvider
 │   ├── fetcher.py               # Adaptador Yahoo/BCB e limpeza
+│   ├── b3_market.py             # Cotações recentes e histórico diário B3
 │   ├── cache.py                 # Cache TTL genérico e limitado
 │   └── demo.py                  # Fonte sintética determinística
 ├── services/
 │   ├── analytics.py             # Caso de uso da comparação
+│   ├── allocation.py            # Caso de uso de novos aportes
 │   └── logging_config.py        # Logs JSON
 ├── ui/
 │   ├── dashboard.py             # Composição e entradas Streamlit
 │   ├── components.py            # Cards, tabelas e metodologia
-│   └── charts.py                # Figuras Plotly
+│   ├── charts.py                # Figuras Plotly
+│   ├── allocation_charts.py     # Pesos antes/depois e destino do aporte
+│   └── views/rebalance_view.py  # Formulário e resultados do aporte B3
 ├── tests/                       # Testes unitários, contratos e AppTest
 ├── docs/                        # Migração, publicação e captura da UI
 ├── .github/workflows/ci.yml     # Lint, formatação, tipos e testes
@@ -119,7 +183,7 @@ flowchart LR
 | Serviço de análise separado | Centraliza janelas, moedas, fluxos e referências da comparação. |
 | Cache TTL de uma hora, máximo de 16 entradas | Evita downloads repetidos, copia objetos para isolar mutações e não armazena falhas. É local ao processo; múltiplas réplicas pedem cache distribuído. |
 | Retornos e matrizes com NumPy/pandas | Simulação de alocações vetorizada; posições mensais mantêm um loop explícito para auditoria dos fluxos. |
-| Nuvem amostral, sem otimizador adicional | Dependências enxutas e interpretação honesta: as amostras não representam uma fronteira eficiente exata. |
+| Nuvem amostral e otimização com propósitos distintos | O dashboard explora carteiras simuladas; o simulador de aportes usa SciPy/SLSQP, respeitando as posições existentes e sem alegar ótimo inteiro. |
 | Logs JSON e erros de domínio | Facilita diagnóstico de indisponibilidade e qualidade de dados sem depender da interface. |
 | Dados sintéticos determinísticos | Demonstrações e testes funcionam sem rate limits ou respostas mutáveis de APIs. |
 
@@ -172,6 +236,8 @@ python -m pytest
 ```
 
 A suíte cobre perdas iniciais, fluxos iguais entre estratégias, base zero de patrimônio, reinvestimento, aquecimento do Radar, ausência de lookahead no DPA, percentuais do CDI, formatos do Yahoo, lacunas, TTL e isolamento do cache. Os testes Streamlit verificam a interface, a troca de mercado, carteira vazia, valores zerados e falhas da fonte. Não fazem requisições externas.
+
+Os testes do novo módulo cobrem aporte insuficiente, carteira balanceada, metas zeradas, lotes, orçamento em centavos, preço médio separado do valor de mercado, ausência de vendas, carteira consolidada na otimização, volatilidade com caixa e amostras insuficientes. Casos de dois ativos com covariância conhecida verificam os resultados matemáticos; testes com orçamentos aleatórios verificam as invariantes do plano. AppTest cobre formulário, navegação e os dois critérios de risco.
 
 O workflow **Quality checks** executa as mesmas verificações no GitHub Actions com Python 3.14. Os pins são de dependências diretas; dependências transitivas seguem os intervalos dos fornecedores. Para uma implantação com reprodutibilidade binária, gere um lock completo no ambiente de destino.
 

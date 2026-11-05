@@ -126,7 +126,6 @@ def results_tabs(result: Analysis, currency: str, contribution: float, rf: float
 
 def render_dashboard() -> None:
     """Carrega um caso de uso e apresenta falhas de dados sem tracebacks na tela."""
-    st.set_page_config(page_title="Invest Analytics | Risco & Retorno", page_icon="◈", layout="wide")
     st.markdown(
         """<style>
         .block-container {padding-top: 4rem; max-width: 1600px;}
@@ -146,9 +145,14 @@ def render_dashboard() -> None:
     st.write("Explore o retorno, entenda as perdas e compare estratégias com as mesmas regras.")
     st.sidebar.title("Configurar análise")
     source = st.sidebar.selectbox(
-        "Fonte", ["Demonstração (sem internet)", "Mercado (Yahoo + BCB)"], key="source"
+        "Fonte",
+        ["Demonstração (sem internet)", "Mercado (Yahoo + BCB)"],
+        key="source",
+        persist_state="session",
     )
-    market = st.sidebar.selectbox("Mercado / moeda", ["B3 · BRL", "EUA · USD"], key="market")
+    market = st.sidebar.selectbox(
+        "Mercado / moeda", ["B3 · BRL", "EUA · USD"], key="market", persist_state="session"
+    )
     market_code = "B3" if market.startswith("B3") else "EUA"
     demo = source.startswith("Demonstração")
     universe = tuple(B3_WEIGHTS) if market_code == "B3" else US_TICKERS
@@ -158,21 +162,59 @@ def render_dashboard() -> None:
         st.session_state["active_market"] = market_code
     last_month = pd.Timestamp.now(tz="America/Sao_Paulo").date().replace(day=1) - pd.Timedelta(days=1)
     with st.sidebar.form("analysis_settings"):
-        tickers = st.multiselect("Ativos", universe, key="tickers")
-        start = st.date_input("Primeiro fechamento", value=date(2016, 1, 31), key="start")
-        end = st.date_input("Última data", value=date(2025, 12, 31) if demo else last_month, key="end")
+        tickers = st.multiselect("Ativos", universe, key="tickers", persist_state="session")
+        start = st.date_input(
+            "Primeiro fechamento", value=date(2016, 1, 31), key="start", persist_state="session"
+        )
+        end = st.date_input(
+            "Última data",
+            value=date(2025, 12, 31) if demo else last_month,
+            key="end",
+            persist_state="session",
+        )
         capital = st.number_input(
-            "Capital inicial", min_value=0.0, value=100_000.0, step=5_000.0, key="capital"
+            "Capital inicial",
+            min_value=0.0,
+            value=100_000.0,
+            step=5_000.0,
+            key="capital",
+            persist_state="session",
         )
         contribution = st.number_input(
-            "Aporte mensal", min_value=0.0, value=1_000.0, step=100.0, key="contribution"
+            "Aporte mensal",
+            min_value=0.0,
+            value=1_000.0,
+            step=100.0,
+            key="contribution",
+            persist_state="session",
         )
-        reinvest = st.checkbox("Reinvestir proventos", value=True, key="reinvest")
-        use_weights = st.checkbox("Pesos do legado B3", value=True, key="legacy_weights")
-        buy = st.number_input("Yield de compra (%)", min_value=0.1, max_value=99.0, value=8.5, key="buy")
-        hold = st.number_input("Yield de manter (%)", min_value=0.1, max_value=99.0, value=6.0, key="hold")
+        reinvest = st.checkbox("Reinvestir proventos", value=True, key="reinvest", persist_state="session")
+        use_weights = st.checkbox(
+            "Pesos do legado B3", value=True, key="legacy_weights", persist_state="session"
+        )
+        buy = st.number_input(
+            "Yield de compra (%)",
+            min_value=0.1,
+            max_value=99.0,
+            value=8.5,
+            key="buy",
+            persist_state="session",
+        )
+        hold = st.number_input(
+            "Yield de manter (%)",
+            min_value=0.1,
+            max_value=99.0,
+            value=6.0,
+            key="hold",
+            persist_state="session",
+        )
         annual_rf = st.number_input(
-            "Taxa livre de risco USD (% a.a.)", min_value=0.0, max_value=100.0, value=3.0, key="risk_free"
+            "Taxa livre de risco USD (% a.a.)",
+            min_value=0.0,
+            max_value=100.0,
+            value=3.0,
+            key="risk_free",
+            persist_state="session",
         )
         st.form_submit_button("Analisar carteira", type="primary", width="stretch")
     if st.sidebar.button("Atualizar dados de mercado", width="stretch"):

@@ -1,0 +1,260 @@
+"""Simulador de aportes B3 com formulário, ordens indicativas e impacto de risco."""
+
+import logging
+from typing import cast
+
+import pandas as pd
+import streamlit as st
+
+from core.allocation import AllocationStrategy
+from data.b3_market import B3Provider, DemoB3Provider, YahooB3Provider
+from data.models import DataError
+from services.allocation import ContributionAnalysis, parse_positions, simulate_contribution
+from ui.allocation_charts import allocation_comparison, contribution_breakdown
+from ui.components import number
+
+logger = logging.getLogger(__name__)
+STRATEGIES = {
+    "Rebalanceamento inteligente": AllocationStrategy.REBALANCE,
+    "Alocação proporcional direta": AllocationStrategy.PROPORTIONAL,
+    "Otimização de risco e retorno": AllocationStrategy.MIN_VARIANCE,
+}
+
+
+def initial_portfolio() -> pd.DataFrame:
+    """Exemplo de edição com ação, FII e ETF; não representa uma indicação."""
+    return pd.DataFrame(
+        {
+            "ticker": ["ITUB4", "HGLG11", "BOVA11"],
+            "asset_class": ["Ação", "FII", "ETF"],
+            "quantity": [80, 10, 5],
+            "average_price": [28.0, 150.0, 110.0],
+            "target_percent": [40.0, 30.0, 30.0],
+            "lot_size": [1, 1, 1],
+        }
+    )
+
+
+def show_result(analysis: ContributionAnalysis) -> None:
+    """Apresenta o plano e a composição; não transmite ordens a corretoras."""
+    result, market = analysis.result, analysis.market
+    if market.source.startswith("Demonstração"):
+        st.info("DEMONSTRAÇÃO · Cotações e histórico sintéticos; exemplos para explorar o simulador.")
+    st.caption(f"{market.source} · plano da última simulação enviada")
+    for note in market.notes:
+        st.warning(note)
+    with st.container(horizontal=True):
+        st.metric("Aporte disponível", "R$ " + number(result.contribution), border=True)
+        st.metric("Total em compras", "R$ " + number(result.allocated), border=True)
+        st.metric("Caixa residual", "R$ " + number(result.residual_cash), border=True)
+    st.caption(
+        "Patrimônio consolidado: R$ "
+        + number(result.final_value)
+        + ". O caixa residual permanece no denominador dos pesos finais."
+    )
+    if result.allocated == 0:
+        st.info(
+            "Nenhuma compra atende ao orçamento, lotes e distribuição calculada. O aporte permanece em caixa."
+        )
+    st.subheader("Ordens de compra sugeridas")
+    orders = result.orders
+    table = pd.DataFrame(index=orders.index)
+    table["Preço atual"] = orders["price"].map(lambda x: "R$ " + number(x))
+    table["Cotas a comprar"] = orders["buy_quantity"]
+    table["Total alocado"] = orders["allocated"].map(lambda x: "R$ " + number(x))
+    table["Peso resultante"] = orders["final_weight"].map(lambda x: number(x, True))
+    table["Meta"] = orders["target_weight"].map(lambda x: number(x, True))
+    table["Situação"] = [
+        ["Comprar"] if q > 0 else ["Meta zero"] if t == 0 else ["Aguardar"]
+        for q, t in zip(orders["buy_quantity"], orders["target_weight"], strict=True)
+    ]
+    table.index.name = "Ticker"
+    st.dataframe(
+        table,
+        width="stretch",
+        column_config={
+            "Situação": st.column_config.MultiselectColumn(
+                options=["Comprar", "Aguardar", "Meta zero"], color=["green", "orange", "gray"]
+            ),
+        },
+    )
+    st.caption(
+        "Compras em unidades inteiras, conforme o lote mínimo informado. Preços de referência "
+        "podem ter atraso e diferir do livro fracionário e do preço efetivo de execução."
+    )
+    st.plotly_chart(allocation_comparison(result), width="stretch", key="allocation_comparison")
+    st.plotly_chart(contribution_breakdown(result), width="stretch", key="allocation_breakdown")
+    st.subheader("Impacto na volatilidade histórica")
+    with st.container(horizontal=True):
+        st.metric("Antes do aporte", number(result.volatility_before, True), border=True)
+        change = None
+        if result.volatility_before is not None and result.volatility_after is not None:
+            change = number((result.volatility_after - result.volatility_before) * 100) + " p.p."
+        st.metric(
+            "Após aporte · com caixa",
+            number(result.volatility_after, True),
+            delta=change,
+            delta_color="inverse",
+            border=True,
+        )
+        st.metric("Após aporte · só ativos", number(result.volatility_after_invested, True), border=True)
+    if result.observations < 60:
+        st.info("Histórico insuficiente: o plano está disponível, mas o impacto no risco não é mensurável.")
+    else:
+        st.caption(
+            f"{result.observations} retornos diários ajustados na mesma janela · anualização por √252. "
+            "A redução com caixa pode refletir dinheiro ainda não investido. Carteira inicial vazia não tem risco anterior mensurável."
+        )
+    with st.expander("Cotações usadas e posição consolidada"):
+        quote_table = pd.DataFrame(
+            {
+                "Ticker": [q.ticker for q in market.quotes],
+                "Cotação": ["R$ " + number(q.price) for q in market.quotes],
+                "Referência (São Paulo)": [q.as_of.strftime("%d/%m/%Y %H:%M %Z") for q in market.quotes],
+                "Tipo": [q.kind for q in market.quotes],
+            }
+        )
+        st.dataframe(quote_table, hide_index=True, width="stretch")
+        details = orders[["asset_class", "current_quantity", "final_quantity", "average_price_after"]].copy()
+        details["average_price_after"] = details["average_price_after"].map(lambda x: "R$ " + number(x))
+        st.dataframe(
+            details.rename(
+                columns={
+                    "asset_class": "Classe",
+                    "current_quantity": "Cotas antes",
+                    "final_quantity": "Cotas depois",
+                    "average_price_after": "Preço médio após compra",
+                }
+            ),
+            width="stretch",
+        )
+
+
+def render_rebalance_view() -> None:
+    """Permite editar o portfólio e simular somente ao enviar o formulário."""
+    st.caption("INVEST ANALYTICS / APORTES B3")
+    st.title("Dê um destino ao próximo aporte.")
+    st.write("Compare compras para aproximar a carteira das metas ou explorar seu risco e retorno histórico.")
+    if "allocation_editor" not in st.session_state:
+        st.session_state["allocation_editor_base"] = st.session_state.get(
+            "allocation_saved_positions", initial_portfolio()
+        ).copy()
+    with st.expander("Carteira, metas e regras do aporte", expanded=True), st.form("allocation_form"):
+        source = st.selectbox(
+            "Fonte das cotações",
+            ["Demonstração (sem internet)", "Yahoo Finance · B3"],
+            key="allocation_source",
+            persist_state="session",
+        )
+        portfolio = st.data_editor(
+            st.session_state["allocation_editor_base"],
+            key="allocation_editor",
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "ticker": st.column_config.TextColumn(
+                    "Ticker B3",
+                    required=True,
+                    help="Ex.: ITUB4, HGLG11, BOVA11. O sufixo .SA é adicionado automaticamente.",
+                ),
+                "asset_class": st.column_config.SelectboxColumn(
+                    "Classe", options=["Ação", "FII", "ETF"], required=True, default="Ação"
+                ),
+                "quantity": st.column_config.NumberColumn(
+                    "Cotas atuais", min_value=0, step=1, required=True, default=0
+                ),
+                "average_price": st.column_config.NumberColumn(
+                    "Preço médio (R$)", min_value=0.0, step=0.01, format="R$ %.2f", required=True, default=0.0
+                ),
+                "target_percent": st.column_config.NumberColumn(
+                    "Meta (%)", min_value=0.0, max_value=100.0, step=0.1, required=True, default=0.0
+                ),
+                "lot_size": st.column_config.NumberColumn(
+                    "Lote mínimo", min_value=1, step=1, required=True, default=1
+                ),
+            },
+        )
+        st.caption(
+            "Metas por ativo devem somar 100%. Use lote 1 para unidades no mercado fracionário; "
+            "lotes maiores são configuráveis. Classes são informativas. Quantidades decimais não são aceitas."
+        )
+        contribution = st.number_input(
+            "Valor do aporte (R$)",
+            min_value=0.0,
+            max_value=1_000_000_000.0,
+            value=5_000.0,
+            step=100.0,
+            format="%.2f",
+            key="allocation_amount",
+            persist_state="session",
+        )
+        strategy_name = st.selectbox(
+            "Estratégia de alocação", list(STRATEGIES), key="allocation_strategy", persist_state="session"
+        )
+        criterion = st.selectbox(
+            "Critério da otimização de risco",
+            ["Variância mínima", "Sharpe máximo"],
+            key="allocation_criterion",
+            help="Usado somente na estratégia de otimização.",
+            persist_state="session",
+        )
+        years = st.selectbox(
+            "Histórico para o risco (anos)",
+            [1, 3, 5],
+            index=1,
+            key="allocation_years",
+            persist_state="session",
+        )
+        annual_rf = st.number_input(
+            "Taxa livre de risco assumida (% a.a.)",
+            min_value=0.0,
+            max_value=100.0,
+            value=10.0,
+            step=0.5,
+            key="allocation_rf",
+            help="Hipótese para o Sharpe; não é uma cotação atual do CDI.",
+            persist_state="session",
+        )
+        fresh = st.checkbox(
+            "Atualizar cotações ao simular", value=True, key="allocation_fresh", persist_state="session"
+        )
+        submitted = st.form_submit_button(
+            "Simular aporte", type="primary", key="allocation_submit", width="stretch"
+        )
+    if submitted:
+        st.session_state.pop("allocation_analysis", None)
+        try:
+            positions = parse_positions(cast(pd.DataFrame, portfolio))
+            strategy = STRATEGIES[strategy_name]
+            if strategy_name == "Otimização de risco e retorno" and criterion == "Sharpe máximo":
+                strategy = AllocationStrategy.MAX_SHARPE
+            provider: B3Provider = (
+                DemoB3Provider() if source.startswith("Demonstração") else YahooB3Provider()
+            )
+            with st.spinner("Consultando preços e calculando compras…"):
+                analysis = simulate_contribution(
+                    positions, contribution, strategy, provider, years, annual_rf / 100, fresh
+                )
+            st.session_state["allocation_analysis"] = analysis
+            st.session_state["allocation_saved_positions"] = portfolio.copy()
+        except (ValueError, DataError, ArithmeticError, KeyError, OSError) as exc:
+            logger.warning("contribution_analysis_failed: %s", type(exc).__name__)
+            st.error(f"Não foi possível simular o aporte: {exc}")
+    stored = st.session_state.get("allocation_analysis")
+    if isinstance(stored, ContributionAnalysis):
+        show_result(stored)
+    elif not submitted:
+        st.info(
+            "Edite a carteira e clique em Simular aporte. Nenhuma consulta de mercado é feita antes do envio."
+        )
+    with st.expander("Como o plano é calculado"):
+        st.markdown("""
+- **Rebalanceamento:** aproxima os pesos finais das metas, comprando os ativos com maior déficit. Posições existentes não são vendidas.
+- **Proporcional:** aplica as metas diretamente ao dinheiro novo, independentemente dos desvios atuais.
+- **Risco/retorno:** otimiza a carteira consolidada por variância mínima ou Sharpe. Metas positivas indicam ativos elegíveis; não são limites de exposição nesse modo.
+- **Meta zero:** bloqueia compras, preservando qualquer posição já existente, inclusive na otimização.
+- **Lotes:** o plano contínuo é arredondado para baixo. A sobra compra um lote adicional somente se aproximar a distribuição do plano calculado. Não há garantia de ótimo inteiro nem de aporte integralmente investido.
+- **Preços e risco:** Yahoo pode ter atraso. Os horários são apresentados; o histórico ajustado exclui o pregão corrente. Custos, tributos, liquidez e slippage não entram na simulação.
+- **Privacidade:** posições e resultados ficam na memória da sessão no servidor; não são gravados em arquivos ou enviados a corretoras. A fonte recebe somente tickers e janela de preços.
+""")
