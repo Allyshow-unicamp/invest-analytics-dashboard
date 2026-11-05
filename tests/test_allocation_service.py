@@ -16,7 +16,7 @@ from ui.views.rebalance_view import initial_portfolio
 def test_demo_supports_stocks_fiis_and_etfs() -> None:
     positions = parse_positions(initial_portfolio())
     result = simulate_contribution(positions, 5000, AllocationStrategy.REBALANCE, DemoB3Provider())
-    assert set(result.result.orders.index) == {"ITUB4.SA", "HGLG11.SA", "BOVA11.SA"}
+    assert set(result.result.orders.index) == {"BBAS3.SA", "TAEE11.SA"}
     assert result.result.observations >= 60
     assert result.result.allocated + result.result.residual_cash == pytest.approx(5000)
 

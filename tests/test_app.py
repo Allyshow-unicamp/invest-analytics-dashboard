@@ -3,11 +3,19 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
+from data.demo import DemoProvider
 from data.models import DataError
 
 APP = Path(__file__).resolve().parents[1] / "app.py"
+
+
+@pytest.fixture(autouse=True)
+def mock_market_provider() -> object:
+    with patch("ui.dashboard.YahooBCBProvider.load", side_effect=DemoProvider().load) as load:
+        yield load
 
 
 def test_default_dashboard_and_empty_portfolio() -> None:
@@ -17,7 +25,7 @@ def test_default_dashboard_and_empty_portfolio() -> None:
     assert len(app.metric) >= 5
     assert len(app.multiselect("tickers").value) == 13
     assert any("Resumo executivo" in md.value for md in app.markdown)
-    assert any("Ibovespa sintético" in md.value and "CDI" in md.value for md in app.markdown)
+    assert any("CDI" in md.value for md in app.markdown)
     assert any(m.delta is not None for m in app.metric[:5])
     assert len(app.get("plotly_chart")) >= 6
     app.multiselect("tickers").set_value([])
@@ -31,7 +39,7 @@ def test_us_market_and_zero_capital() -> None:
     app.selectbox("market").set_value("EUA · USD").run()
     assert not app.exception
     assert len(app.multiselect("tickers").value) == 10
-    assert any("VOO sintético" in md.value for md in app.markdown)
+    assert any("VOO" in md.value for md in app.markdown)
     assert any("USD" in message.value for message in app.caption)
     app.number_input("capital").set_value(0)
     app.number_input("contribution").set_value(0)
@@ -54,7 +62,6 @@ def test_presentation_preset_restores_defaults() -> None:
 def test_live_failure_shows_error_without_synthetic_fallback() -> None:
     with patch("ui.dashboard.YahooBCBProvider.load", side_effect=DataError("Fonte indisponível")):
         app = AppTest.from_file(str(APP), default_timeout=30).run()
-        app.selectbox("source").set_value("Mercado (Yahoo + BCB)").run()
     assert not app.exception
     assert any("Fonte indisponível" in message.value for message in app.error)
     assert len(app.metric) == 0

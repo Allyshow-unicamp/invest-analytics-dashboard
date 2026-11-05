@@ -3,11 +3,13 @@
 import logging
 from typing import cast
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 from core.allocation import AllocationStrategy
-from data.b3_market import B3Provider, DemoB3Provider, YahooB3Provider
+from core.bazin import B3_WEIGHTS
+from data.b3_market import B3Provider, YahooB3Provider
 from data.models import DataError
 from services.allocation import ContributionAnalysis, parse_positions, simulate_contribution
 from ui.allocation_charts import allocation_comparison, contribution_breakdown
@@ -22,16 +24,56 @@ STRATEGIES = {
 }
 
 
-def initial_portfolio() -> pd.DataFrame:
-    """Exemplo de edição com ação, FII e ETF; não representa uma indicação."""
+def _normalized_percents(tickers: list[str]) -> list[float]:
+    """Converte pesos Bazin dos ativos selecionados em percentuais que somam 100,0%."""
+    raw = np.array([B3_WEIGHTS.get(f"{t}.SA", 1.0) for t in tickers], dtype=float)
+    total = float(raw.sum())
+    scaled = raw / total * 100.0 if total > 0 else np.full(len(tickers), 100.0 / len(tickers))
+    basis = np.floor(scaled * 10).astype(int)
+    remainder = 1000 - int(basis.sum())
+    if remainder > 0:
+        order = np.argsort(-(scaled * 10 - basis))
+        for idx in order[:remainder]:
+            basis[int(idx)] += 1
+    return [int(v) / 10.0 for v in basis]
+
+
+def radar_buy_portfolio(radar_frame: pd.DataFrame | None) -> pd.DataFrame | None:
+    """Monta a carteira base a partir das ações marcadas como COMPRAR no Radar."""
+    if radar_frame is None or radar_frame.empty or "signal" not in radar_frame.columns:
+        return None
+    buys = radar_frame.loc[radar_frame["signal"].eq("COMPRAR")]
+    if buys.empty:
+        return None
+    tickers = [str(t).replace(".SA", "") for t in buys.index]
+    prices = [round(float(p), 2) for p in buys["price"]]
     return pd.DataFrame(
         {
-            "ticker": ["ITUB4", "HGLG11", "BOVA11"],
-            "asset_class": ["Ação", "FII", "ETF"],
-            "quantity": [80, 10, 5],
-            "average_price": [28.0, 150.0, 110.0],
-            "target_percent": [40.0, 30.0, 30.0],
-            "lot_size": [1, 1, 1],
+            "ticker": tickers,
+            "asset_class": ["Ação"] * len(tickers),
+            "quantity": [0] * len(tickers),
+            "average_price": prices,
+            "target_percent": _normalized_percents(tickers),
+            "lot_size": [1] * len(tickers),
+        }
+    )
+
+
+def initial_portfolio(radar_frame: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Usa as ações COMPRAR do último Radar Bazin ou o exemplo padrão se indisponível."""
+    source = radar_frame if radar_frame is not None else st.session_state.get("latest_radar")
+    if isinstance(source, pd.DataFrame):
+        from_radar = radar_buy_portfolio(source)
+        if from_radar is not None:
+            return from_radar
+    return pd.DataFrame(
+        {
+            "ticker": ["BBAS3", "TAEE11"],
+            "asset_class": ["Ação", "Ação"],
+            "quantity": [0, 0],
+            "average_price": [27.0, 35.0],
+            "target_percent": [50.0, 50.0],
+            "lot_size": [1, 1],
         }
     )
 
@@ -39,8 +81,6 @@ def initial_portfolio() -> pd.DataFrame:
 def show_result(analysis: ContributionAnalysis) -> None:
     """Apresenta o plano e a composição; não transmite ordens a corretoras."""
     result, market = analysis.result, analysis.market
-    if market.source.startswith("Demonstração"):
-        st.info("DEMONSTRAÇÃO · Cotações e histórico sintéticos; exemplos para explorar o simulador.")
     st.caption(f"{market.source} · plano da última simulação enviada")
     for note in market.notes:
         st.warning(note)
@@ -136,19 +176,41 @@ def render_rebalance_view() -> None:
     hero(
         "INVEST ANALYTICS / APORTES B3",
         "Dê um destino ao próximo aporte.",
-        "Compare compras para aproximar a carteira das metas ou explorar seu risco e retorno histórico.",
+        "Baseado nas ações marcadas como COMPRAR no Radar de preço · último fechamento.",
     )
-    if "allocation_editor" not in st.session_state:
+    latest_radar = st.session_state.get("latest_radar")
+    radar_base = radar_buy_portfolio(latest_radar) if isinstance(latest_radar, pd.DataFrame) else None
+    signature = (
+        tuple(radar_base["ticker"].tolist())
+        if radar_base is not None
+        else ("NONE",)
+        if isinstance(latest_radar, pd.DataFrame)
+        else None
+    )
+    if signature is not None and st.session_state.get("allocation_radar_sig") != signature:
+        st.session_state["allocation_radar_sig"] = signature
+        if radar_base is not None and "allocation_saved_positions" not in st.session_state:
+            st.session_state["allocation_editor_base"] = radar_base.copy()
+            st.session_state.pop("allocation_editor", None)
+    if "allocation_editor_base" not in st.session_state:
         st.session_state["allocation_editor_base"] = st.session_state.get(
             "allocation_saved_positions", initial_portfolio()
         ).copy()
-    with st.expander("Carteira, metas e regras do aporte", expanded=True), st.form("allocation_form"):
-        source = st.selectbox(
-            "Fonte das cotações",
-            ["Demonstração (sem internet)", "Yahoo Finance · B3"],
-            key="allocation_source",
-            persist_state="session",
+    if radar_base is not None:
+        tickers_txt = ", ".join(radar_base["ticker"].tolist())
+        col_msg, col_btn = st.columns([4, 1])
+        col_msg.caption(f"Sinais **COMPRAR** no último fechamento do Radar Bazin: **{tickers_txt}**.")
+        if col_btn.button("Recarregar do Radar", width="stretch"):
+            st.session_state["allocation_editor_base"] = radar_base.copy()
+            st.session_state.pop("allocation_saved_positions", None)
+            st.session_state.pop("allocation_editor", None)
+            st.rerun()
+    elif isinstance(latest_radar, pd.DataFrame):
+        st.info(
+            "Nenhum ativo teve sinal COMPRAR no último fechamento do Radar Bazin. "
+            "Ajuste o yield de compra no dashboard ou edite os ativos manualmente abaixo."
         )
+    with st.expander("Carteira, metas e regras do aporte", expanded=True), st.form("allocation_form"):
         portfolio = st.data_editor(
             st.session_state["allocation_editor_base"],
             key="allocation_editor",
@@ -159,7 +221,7 @@ def render_rebalance_view() -> None:
                 "ticker": st.column_config.TextColumn(
                     "Ticker B3",
                     required=True,
-                    help="Ex.: ITUB4, HGLG11, BOVA11. O sufixo .SA é adicionado automaticamente.",
+                    help="Ex.: ITUB4, BBAS3, TAEE11. O sufixo .SA é adicionado automaticamente.",
                 ),
                 "asset_class": st.column_config.SelectboxColumn(
                     "Classe", options=["Ação", "FII", "ETF"], required=True, default="Ação"
@@ -232,10 +294,8 @@ def render_rebalance_view() -> None:
             strategy = STRATEGIES[strategy_name]
             if strategy_name == "Otimização de risco e retorno" and criterion == "Sharpe máximo":
                 strategy = AllocationStrategy.MAX_SHARPE
-            provider: B3Provider = (
-                DemoB3Provider() if source.startswith("Demonstração") else YahooB3Provider()
-            )
-            with st.spinner("Consultando preços e calculando compras…"):
+            provider: B3Provider = YahooB3Provider()
+            with st.spinner("Consultando preços no Yahoo Finance e calculando compras…"):
                 analysis = simulate_contribution(
                     positions, contribution, strategy, provider, years, annual_rf / 100, fresh
                 )
@@ -253,6 +313,7 @@ def render_rebalance_view() -> None:
         )
     with st.expander("Como o plano é calculado"):
         st.markdown("""
+- **Base do Radar Bazin:** a carteira inicial parte dos ativos com sinal **COMPRAR** na tabela *Radar de preço · último fechamento* do dashboard, ponderados pelos pesos do legado B3.
 - **Rebalanceamento:** aproxima os pesos finais das metas, comprando os ativos com maior déficit. Posições existentes não são vendidas.
 - **Proporcional:** aplica as metas diretamente ao dinheiro novo, independentemente dos desvios atuais.
 - **Risco/retorno:** otimiza a carteira consolidada por variância mínima ou Sharpe. Metas positivas indicam ativos elegíveis; não são limites de exposição nesse modo.

@@ -11,7 +11,7 @@ import streamlit as st
 from core.bazin import B3_WEIGHTS
 from core.portfolio import bootstrap, simulate_portfolios
 from core.valuation import dividend_valuation, monthly_income
-from data.demo import US_TICKERS, DemoProvider
+from data.demo import US_TICKERS
 from data.fetcher import CACHE, YahooBCBProvider
 from data.models import DataError, MarketProvider
 from services.analytics import Analysis, analyze
@@ -30,26 +30,27 @@ SIGNAL_COLORS = {
     "SEM PREÇO": "gray",
 }
 DEFAULT_US_TICKERS = ("O", "CVX", "ED", "ADM", "XOM", "JNJ", "PEP", "KO", "PG", "ABT")
-PRESENTATION: dict[str, object] = {
-    "source": "Demonstração (sem internet)",
-    "market": "B3 · BRL",
-    "active_market": "B3",
-    "tickers": list(B3_WEIGHTS),
-    "start": date(2016, 1, 31),
-    "end": date(2025, 12, 31),
-    "capital": 100_000.0,
-    "contribution": 1_000.0,
-    "reinvest": True,
-    "legacy_weights": True,
-    "buy": 8.5,
-    "hold": 6.0,
-    "risk_free": 3.0,
-}
 
 
 def load_presentation() -> None:
-    """Restaura parâmetros estáveis e offline para demonstrações ao vivo."""
-    st.session_state.update(PRESENTATION)
+    """Restaura os parâmetros padrão da carteira B3 com dados reais."""
+    last_month = pd.Timestamp.now(tz="America/Sao_Paulo").date().replace(day=1) - pd.Timedelta(days=1)
+    st.session_state.update(
+        {
+            "market": "B3 · BRL",
+            "active_market": "B3",
+            "tickers": list(B3_WEIGHTS),
+            "start": date(2016, 1, 31),
+            "end": last_month,
+            "capital": 100_000.0,
+            "contribution": 1_000.0,
+            "reinvest": True,
+            "legacy_weights": True,
+            "buy": 8.5,
+            "hold": 6.0,
+            "risk_free": 3.0,
+        }
+    )
 
 
 def valuation_tab() -> None:
@@ -142,7 +143,7 @@ def results_tabs(
     contribution: float,
     rf: float,
     benchmark: str = "",
-    real_data: bool = False,
+    real_data: bool = True,
 ) -> None:
     """Monta as visões de performance, risco e cenários."""
     primary = next(iter(result.strategies))
@@ -225,17 +226,10 @@ def render_dashboard() -> None:
         "Explore o retorno, entenda as perdas e compare estratégias com as mesmas regras.",
     )
     st.sidebar.title("Configurar análise")
-    source = st.sidebar.selectbox(
-        "Fonte",
-        ["Demonstração (sem internet)", "Mercado (Yahoo + BCB)"],
-        key="source",
-        persist_state="session",
-    )
     market = st.sidebar.selectbox(
         "Mercado / moeda", ["B3 · BRL", "EUA · USD"], key="market", persist_state="session"
     )
     market_code = "B3" if market.startswith("B3") else "EUA"
-    demo = source.startswith("Demonstração")
     universe = tuple(B3_WEIGHTS) if market_code == "B3" else US_TICKERS
     default_assets = list(B3_WEIGHTS) if market_code == "B3" else list(DEFAULT_US_TICKERS)
     if st.session_state.get("active_market") != market_code:
@@ -250,7 +244,7 @@ def render_dashboard() -> None:
         )
         end = period_end.date_input(
             "Fim",
-            value=date(2025, 12, 31) if demo else last_month,
+            value=last_month,
             key="end",
             persist_state="session",
         )
@@ -306,7 +300,7 @@ def render_dashboard() -> None:
         "Cenário da apresentação",
         width="stretch",
         on_click=load_presentation,
-        help="Volta aos parâmetros padrão em modo demonstração, sem depender de internet.",
+        help="Restaura os parâmetros padrão da carteira B3.",
     )
     st.sidebar.caption("Dados mensais · aportes no fim do mês · posições fracionárias")
     if not tickers:
@@ -321,8 +315,8 @@ def render_dashboard() -> None:
     if market_code == "B3" and hold >= buy:
         st.warning("O yield de manter deve ser menor que o yield de compra.")
         return
-    provider: MarketProvider = DemoProvider() if demo else YahooBCBProvider()
-    history_start = f"{max(2010, start.year - 5) if demo else start.year - 5}-01-01"
+    provider: MarketProvider = YahooBCBProvider()
+    history_start = f"{start.year - 5}-01-01"
     try:
         with st.spinner("Preparando séries e calculando indicadores…"):
             data = provider.load(tuple(tickers), history_start, end.isoformat(), market_code)
@@ -341,8 +335,10 @@ def render_dashboard() -> None:
     except (DataError, ValueError, KeyError, OSError) as exc:
         logger.exception("analysis_failed")
         st.error(f"Não foi possível concluir a análise: {exc}")
-        st.info("Revise datas e ativos, atualize os dados ou selecione Demonstração.")
+        st.info("Revise datas e ativos ou clique em Atualizar dados de mercado.")
         return
+    if result.radar is not None:
+        st.session_state["latest_radar"] = result.radar.copy()
     window = next(iter(result.strategies.values())).index
     chips(
         [
@@ -351,7 +347,6 @@ def render_dashboard() -> None:
             f"{len(window) - 1} intervalos mensais",
             f"{len(tickers)} ativos",
         ],
-        demo=demo,
     )
     st.caption(" · ".join([f"Fonte: {data.source} · {data.currency}", *data.notes]))
     if len(window) < 37:
@@ -363,7 +358,7 @@ def render_dashboard() -> None:
             float(cast(float, (1 + data.cash_returns.reindex(window[1:])).prod())) ** (12 / (len(window) - 1))
             - 1
         )
-    results_tabs(result, data.currency, contribution, rf, data.benchmark_name, real_data=not demo)
+    results_tabs(result, data.currency, contribution, rf, data.benchmark_name, real_data=True)
     st.caption(
         "Ferramenta de pesquisa e apoio à decisão. Resultados históricos e cenários não garantem retorno futuro."
     )

@@ -181,7 +181,7 @@ def pipeline() -> None:
             node [shape=box, style="rounded,filled", fillcolor="#131f31", color="#38d6bd",
                   fontcolor="#e4edf8", fontname="Helvetica", margin="0.25,0.12"];
             edge [color="#70aaff"];
-            dados [label="Dados\\nYahoo Finance · BCB\\nou demonstração"];
+            dados [label="Dados\\nYahoo Finance · BCB"];
             cache [label="Cache local\\ne validação"];
             motor [label="Backtest mensal\\naportes · proventos"];
             estr [label="Estratégias\\nRadar Bazin · DCA\\nÍndice · CDI"];
