@@ -1,0 +1,29 @@
+[project]
+name = "invest-analytics-dashboard"
+version = "1.0.0"
+description = "Pesquisa de carteiras, risco e dividendos com Streamlit"
+requires-python = ">=3.14"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 110
+extend-exclude = ["motorcore", "maquina_do_tempo", "motor_investimentos_v6.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "UP046", "UP047"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["core", "data", "services", "ui", "app.py"]
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["plotly.*", "yfinance.*"]
+ignore_missing_imports = true

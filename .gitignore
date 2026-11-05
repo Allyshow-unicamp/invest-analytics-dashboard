@@ -1,0 +1,35 @@
+# Ambientes e artefatos locais
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage*
+coverage.xml
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Credenciais e configurações privadas
+.env
+.env.*
+!.env.example
+credentials*.json
+*service-account*.json
+*.pem
+*.key
+.streamlit/secrets.toml
+
+# Legado preservado localmente, fora da distribuição pública
+/motor_investimentos_v6.py
+/motorcore/
+/maquina_do_tempo/
+/retorno_mensal_25_anos.csv
+/dividendos_anuais_25_anos.csv
+/prompt.md
