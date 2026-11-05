@@ -12,6 +12,7 @@ from data.models import DataError
 from services.allocation import ContributionAnalysis, parse_positions, simulate_contribution
 from ui.allocation_charts import allocation_comparison, contribution_breakdown
 from ui.components import number
+from ui.theme import hero
 
 logger = logging.getLogger(__name__)
 STRATEGIES = {
@@ -132,9 +133,11 @@ def show_result(analysis: ContributionAnalysis) -> None:
 
 def render_rebalance_view() -> None:
     """Permite editar o portfólio e simular somente ao enviar o formulário."""
-    st.caption("INVEST ANALYTICS / APORTES B3")
-    st.title("Dê um destino ao próximo aporte.")
-    st.write("Compare compras para aproximar a carteira das metas ou explorar seu risco e retorno histórico.")
+    hero(
+        "INVEST ANALYTICS / APORTES B3",
+        "Dê um destino ao próximo aporte.",
+        "Compare compras para aproximar a carteira das metas ou explorar seu risco e retorno histórico.",
+    )
     if "allocation_editor" not in st.session_state:
         st.session_state["allocation_editor_base"] = st.session_state.get(
             "allocation_saved_positions", initial_portfolio()

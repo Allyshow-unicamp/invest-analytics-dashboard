@@ -16,9 +16,39 @@ from data.fetcher import CACHE, YahooBCBProvider
 from data.models import DataError, MarketProvider
 from services.analytics import Analysis, analyze
 from ui import charts
-from ui.components import methodology, metric_cards, number, summary_table
+from ui.components import executive_summary, methodology, metric_cards, number, summary_table
+from ui.theme import chips, hero
 
 logger = logging.getLogger(__name__)
+
+SIGNAL_COLORS = {
+    "COMPRAR": "green",
+    "MANTER": "orange",
+    "AGUARDAR": "red",
+    "SEM HISTÓRICO": "gray",
+    "SEM DIVIDENDOS": "gray",
+    "SEM PREÇO": "gray",
+}
+PRESENTATION: dict[str, object] = {
+    "source": "Demonstração (sem internet)",
+    "market": "B3 · BRL",
+    "active_market": "B3",
+    "tickers": list(B3_WEIGHTS)[:5],
+    "start": date(2016, 1, 31),
+    "end": date(2025, 12, 31),
+    "capital": 100_000.0,
+    "contribution": 1_000.0,
+    "reinvest": True,
+    "legacy_weights": True,
+    "buy": 8.5,
+    "hold": 6.0,
+    "risk_free": 3.0,
+}
+
+
+def load_presentation() -> None:
+    """Restaura parâmetros estáveis e offline para demonstrações ao vivo."""
+    st.session_state.update(PRESENTATION)
 
 
 def valuation_tab() -> None:
@@ -37,6 +67,7 @@ def valuation_tab() -> None:
         right.metric("Gordon · crescimento perpétuo", number(ddm), border=True)
     except ValueError as exc:
         st.warning(str(exc))
+    st.latex(r"P_{yield} = \frac{D}{y} \qquad P_{Gordon} = \frac{D\,(1+g)}{k-g}, \quad k > g")
     st.caption(
         "Gordon pressupõe crescimento estável e desconto maior que crescimento. "
         "Os valores dependem integralmente das premissas informadas."
@@ -48,47 +79,106 @@ def valuation_tab() -> None:
     dy = c.number_input("Yield anual assumido (%)", min_value=0.0, max_value=100.0, value=6.0)
     tax = d.number_input("Hipótese de retenção (%)", min_value=0.0, max_value=100.0, value=0.0)
     income = monthly_income(capital, fx, dy / 100, tax / 100)
-    st.metric("Renda mensal estimada após retenção", "USD " + number(income))
+    st.metric("Renda mensal estimada após retenção", "USD " + number(income), border=True)
     st.caption(
         "Câmbio, yield e retenção são hipóteses editáveis. Custos de conversão e demais tributos "
         "não entram na estimativa; o modelo não representa uma apuração tributária."
     )
 
 
-def results_tabs(result: Analysis, currency: str, contribution: float, rf: float) -> None:
+def radar_section(radar: pd.DataFrame) -> None:
+    """Tabela do Radar com sinais coloridos por situação."""
+    st.subheader("Radar de preço · último fechamento")
+    radar_table = radar.rename(
+        index=lambda t: str(t).replace(".SA", ""),
+        columns={
+            "price": "Preço",
+            "dpa": "DPA ponderado",
+            "buy_ceiling": "Teto comprar",
+            "hold_ceiling": "Teto manter",
+            "signal": "Sinal",
+            "allocation": "Peso de novos recursos",
+        },
+    )
+    for column in ["Preço", "DPA ponderado", "Teto comprar", "Teto manter"]:
+        radar_table[column] = radar_table[column].map(lambda v: number(None if pd.isna(v) else float(v)))
+    radar_table["Sinal"] = radar_table["Sinal"].map(lambda s: [s])
+    radar_table.index.name = "Ticker"
+    st.dataframe(
+        radar_table,
+        width="stretch",
+        column_config={
+            "Sinal": st.column_config.MultiselectColumn(
+                options=list(SIGNAL_COLORS), color=list(SIGNAL_COLORS.values())
+            ),
+            "Peso de novos recursos": st.column_config.ProgressColumn(
+                format="percent", min_value=0.0, max_value=1.0
+            ),
+        },
+    )
+    if radar["signal"].eq("SEM HISTÓRICO").any():
+        st.info("Alguns ativos não têm cinco anos completos de proventos e ficaram sem sinal Bazin.")
+
+
+def performance_subtitle(summary: pd.DataFrame, primary: str, benchmark: str) -> str | None:
+    """Título-conclusão: diferença de patrimônio final contra o índice."""
+    if benchmark not in summary.index or benchmark == primary:
+        return None
+    mine, other = (
+        float(cast(float, summary.loc[primary, "wealth"])),
+        float(cast(float, summary.loc[benchmark, "wealth"])),
+    )
+    if not (np.isfinite(mine) and np.isfinite(other)) or other <= 0:
+        return None
+    gap = mine / other - 1
+    side = "acima" if gap >= 0 else "abaixo"
+    return f"{primary} terminou {number(abs(gap), True)} {side} de {benchmark} com os mesmos aportes"
+
+
+def results_tabs(
+    result: Analysis,
+    currency: str,
+    contribution: float,
+    rf: float,
+    benchmark: str = "",
+    real_data: bool = False,
+) -> None:
     """Monta as visões de performance, risco e cenários."""
     primary = next(iter(result.strategies))
-    st.caption(f"ESTRATÉGIA EM DESTAQUE · {primary}")
     primary_summary = cast(pd.Series, result.summary.loc[primary])
-    metric_cards(primary_summary, currency)
+    reference = (
+        cast(pd.Series, result.summary.loc[benchmark])
+        if benchmark in result.summary.index and benchmark != primary
+        else None
+    )
+    executive_summary(result.summary, primary, benchmark, currency, result.strategies[primary].index)
+    st.caption(
+        f"ESTRATÉGIA EM DESTAQUE · {primary}"
+        + (f" · setas = diferença em relação a {benchmark}" if reference is not None else "")
+    )
+    metric_cards(primary_summary, currency, reference, benchmark)
     performance_tab, risk_tab, scenario_tab, value_tab, method_tab = st.tabs(
-        ["Desempenho", "Risco & diversificação", "Cenários", "Valuation & renda", "Metodologia"]
+        ["📈 Desempenho", "🛡️ Risco & diversificação", "🔮 Cenários", "💰 Valuation & renda", "📐 Metodologia"]
     )
     with performance_tab:
-        st.plotly_chart(charts.performance(result.strategies, currency), width="stretch")
-        st.plotly_chart(charts.performance(result.strategies, currency, normalized=True), width="stretch")
+        st.plotly_chart(
+            charts.performance(
+                result.strategies,
+                currency,
+                subtitle=performance_subtitle(result.summary, primary, benchmark),
+                show_events=real_data,
+            ),
+            width="stretch",
+        )
+        st.plotly_chart(
+            charts.performance(result.strategies, currency, normalized=True, show_events=real_data),
+            width="stretch",
+        )
         summary_table(result.summary)
         if result.radar is not None:
-            st.subheader("Radar de preço · último fechamento")
-            radar_table = result.radar.rename(
-                columns={
-                    "price": "Preço",
-                    "dpa": "DPA ponderado",
-                    "buy_ceiling": "Teto comprar",
-                    "hold_ceiling": "Teto manter",
-                    "signal": "Sinal",
-                    "allocation": "Peso de novos recursos",
-                }
-            )
-            st.dataframe(
-                radar_table,
-                width="stretch",
-                column_config={"Peso de novos recursos": st.column_config.NumberColumn(format="percent")},
-            )
-            if result.radar["signal"].eq("SEM HISTÓRICO").any():
-                st.info("Alguns ativos não têm cinco anos completos de proventos e ficaram sem sinal Bazin.")
+            radar_section(result.radar)
     with risk_tab:
-        st.plotly_chart(charts.drawdowns(result.strategies), width="stretch")
+        st.plotly_chart(charts.drawdowns(result.strategies, show_events=real_data), width="stretch")
         left, right = st.columns(2)
         with left:
             st.plotly_chart(charts.correlation(result.asset_returns), width="stretch")
@@ -111,7 +201,9 @@ def results_tabs(result: Analysis, currency: str, contribution: float, rf: float
             for column, q, label in zip(
                 st.columns(3), [0.05, 0.5, 0.95], ["Percentil 5", "Mediana", "Percentil 95"], strict=True
             ):
-                column.metric(label, currency + " " + number(float(np.quantile(paths[:, -1], q))))
+                column.metric(
+                    label, currency + " " + number(float(np.quantile(paths[:, -1], q))), border=True
+                )
             cloud = simulate_portfolios(result.asset_returns, rf)
             st.plotly_chart(charts.portfolio_cloud(cloud), width="stretch")
             st.caption(
@@ -126,23 +218,11 @@ def results_tabs(result: Analysis, currency: str, contribution: float, rf: float
 
 def render_dashboard() -> None:
     """Carrega um caso de uso e apresenta falhas de dados sem tracebacks na tela."""
-    st.markdown(
-        """<style>
-        .block-container {padding-top: 4rem; max-width: 1600px;}
-        h1 {letter-spacing: -0.04em;}
-        [data-testid="stMetricValue"] {font-size: 1.4rem;}
-        @media (max-width: 1400px) {[data-testid="stMetricValue"] {font-size: 1.1rem;}}
-        .st-key-portfolio_metrics [data-testid="stHorizontalBlock"] {
-            display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 0.75rem;
-        }
-        .st-key-portfolio_metrics [data-testid="stColumn"] {width: 100% !important; min-width: 0 !important;}
-        [data-testid="stSidebar"] {border-right: 1px solid #23334c;}
-    </style>""",
-        unsafe_allow_html=True,
+    hero(
+        "INVEST ANALYTICS / RESEARCH WORKSPACE",
+        "Transforme dados em decisões.",
+        "Explore o retorno, entenda as perdas e compare estratégias com as mesmas regras.",
     )
-    st.caption("INVEST ANALYTICS / RESEARCH WORKSPACE")
-    st.title("Transforme dados em decisões.")
-    st.write("Explore o retorno, entenda as perdas e compare estratégias com as mesmas regras.")
     st.sidebar.title("Configurar análise")
     source = st.sidebar.selectbox(
         "Fonte",
@@ -163,11 +243,12 @@ def render_dashboard() -> None:
     last_month = pd.Timestamp.now(tz="America/Sao_Paulo").date().replace(day=1) - pd.Timedelta(days=1)
     with st.sidebar.form("analysis_settings"):
         tickers = st.multiselect("Ativos", universe, key="tickers", persist_state="session")
-        start = st.date_input(
-            "Primeiro fechamento", value=date(2016, 1, 31), key="start", persist_state="session"
+        period_start, period_end = st.columns(2)
+        start = period_start.date_input(
+            "Início", value=date(2016, 1, 31), key="start", persist_state="session"
         )
-        end = st.date_input(
-            "Última data",
+        end = period_end.date_input(
+            "Fim",
             value=date(2025, 12, 31) if demo else last_month,
             key="end",
             persist_state="session",
@@ -189,36 +270,43 @@ def render_dashboard() -> None:
             persist_state="session",
         )
         reinvest = st.checkbox("Reinvestir proventos", value=True, key="reinvest", persist_state="session")
-        use_weights = st.checkbox(
-            "Pesos do legado B3", value=True, key="legacy_weights", persist_state="session"
-        )
-        buy = st.number_input(
-            "Yield de compra (%)",
-            min_value=0.1,
-            max_value=99.0,
-            value=8.5,
-            key="buy",
-            persist_state="session",
-        )
-        hold = st.number_input(
-            "Yield de manter (%)",
-            min_value=0.1,
-            max_value=99.0,
-            value=6.0,
-            key="hold",
-            persist_state="session",
-        )
-        annual_rf = st.number_input(
-            "Taxa livre de risco USD (% a.a.)",
-            min_value=0.0,
-            max_value=100.0,
-            value=3.0,
-            key="risk_free",
-            persist_state="session",
-        )
+        with st.expander("Parâmetros avançados"):
+            use_weights = st.checkbox(
+                "Pesos do legado B3", value=True, key="legacy_weights", persist_state="session"
+            )
+            buy = st.number_input(
+                "Yield de compra (%)",
+                min_value=0.1,
+                max_value=99.0,
+                value=8.5,
+                key="buy",
+                persist_state="session",
+            )
+            hold = st.number_input(
+                "Yield de manter (%)",
+                min_value=0.1,
+                max_value=99.0,
+                value=6.0,
+                key="hold",
+                persist_state="session",
+            )
+            annual_rf = st.number_input(
+                "Taxa livre de risco USD (% a.a.)",
+                min_value=0.0,
+                max_value=100.0,
+                value=3.0,
+                key="risk_free",
+                persist_state="session",
+            )
         st.form_submit_button("Analisar carteira", type="primary", width="stretch")
     if st.sidebar.button("Atualizar dados de mercado", width="stretch"):
         CACHE.clear()
+    st.sidebar.button(
+        "Cenário da apresentação",
+        width="stretch",
+        on_click=load_presentation,
+        help="Volta aos parâmetros padrão em modo demonstração, sem depender de internet.",
+    )
     st.sidebar.caption("Dados mensais · aportes no fim do mês · posições fracionárias")
     if not tickers:
         st.warning("Selecione ao menos um ativo para iniciar a análise.")
@@ -254,15 +342,17 @@ def render_dashboard() -> None:
         st.error(f"Não foi possível concluir a análise: {exc}")
         st.info("Revise datas e ativos, atualize os dados ou selecione Demonstração.")
         return
-    if demo:
-        st.info("DEMONSTRAÇÃO · Dados sintéticos de 2010–2025 para explorar a ferramenta.")
     window = next(iter(result.strategies.values())).index
-    st.caption(
-        f"{data.source} · {data.currency} · {window[0]:%m/%Y} a {window[-1]:%m/%Y} "
-        f"· {len(window) - 1} intervalos mensais"
+    chips(
+        [
+            data.currency,
+            f"{window[0]:%m/%Y} a {window[-1]:%m/%Y}",
+            f"{len(window) - 1} intervalos mensais",
+            f"{len(tickers)} ativos",
+        ],
+        demo=demo,
     )
-    for note in data.notes:
-        st.caption(note)
+    st.caption(" · ".join([f"Fonte: {data.source} · {data.currency}", *data.notes]))
     if len(window) < 37:
         st.warning("Janela menor que 36 retornos: métricas e caudas têm baixa precisão estatística.")
     # A nuvem usa uma referência anual efetiva, com a conversão explícita do CDI.
@@ -272,7 +362,7 @@ def render_dashboard() -> None:
             float(cast(float, (1 + data.cash_returns.reindex(window[1:])).prod())) ** (12 / (len(window) - 1))
             - 1
         )
-    results_tabs(result, data.currency, contribution, rf)
+    results_tabs(result, data.currency, contribution, rf, data.benchmark_name, real_data=not demo)
     st.caption(
         "Ferramenta de pesquisa e apoio à decisão. Resultados históricos e cenários não garantem retorno futuro."
     )

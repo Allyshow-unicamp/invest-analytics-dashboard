@@ -5,6 +5,10 @@ backgroundColor = "#0c1422"
 secondaryBackgroundColor = "#131f31"
 textColor = "#e4edf8"
 font = "sans serif"
+borderColor = "#23334c"
+
+[client]
+toolbarMode = "minimal"
 
 [browser]
 gatherUsageStats = false

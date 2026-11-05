@@ -15,11 +15,23 @@ def test_default_dashboard_and_empty_portfolio() -> None:
     assert not app.exception
     assert len(app.tabs) == 5
     assert len(app.metric) >= 5
+    assert any("Resumo executivo" in md.value for md in app.markdown)
+    assert any(m.delta is not None for m in app.metric[:5])
     assert len(app.get("plotly_chart")) >= 6
     app.multiselect("tickers").set_value([])
     app.button[0].click().run()
     assert not app.exception
     assert any("ao menos um ativo" in message.value for message in app.warning)
+
+
+def test_presentation_preset_restores_defaults() -> None:
+    app = AppTest.from_file(str(APP), default_timeout=30).run()
+    app.selectbox("market").set_value("EUA · USD").run()
+    preset_btn = next(b for b in app.button if "apresentação" in b.label)
+    preset_btn.click().run()
+    assert not app.exception
+    assert app.selectbox("market").value == "B3 · BRL"
+    assert len(app.metric) >= 5
 
 
 def test_us_market_and_zero_capital() -> None:
